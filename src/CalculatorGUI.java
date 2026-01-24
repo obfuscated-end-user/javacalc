@@ -1,25 +1,50 @@
-import javax.swing.*;
-import java.awt.*;
-import java.awt.event.*;
-
 /**
- * HOW TO RUN
- * javac .\CalculatorGUI.java
- * java CalculatorGUI
- * 
- * ONE LINE:
- * javac .\CalculatorGUI.java; if ($?) { java CalculatorGUI }
- * 
  * java version "22.0.2" 2024-07-16
  * Java(TM) SE Runtime Environment (build 22.0.2+9-70)
  * Java HotSpot(TM) 64-Bit Server VM (build 22.0.2+9-70, mixed mode, sharing)
  * javac 22.0.2
+ * 
+ * TO-DO
+ * - movable cursor in display
+ * - use keyboard for input
+ * - show current equation like "1 + 1" below the display
+ * - more functions
+ * - some buttons don't really do anything
+ * - proper javadocs
  */
+
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.*;
 
 public class CalculatorGUI extends JFrame implements ActionListener {
 	private JTextField display;
 	private double num1, num2, result;
 	private String operator;
+	// trye when the next digit should replace the display
+	// false when digits should be appended
+	private boolean startNewNumber = true;
+
+	// builds a readable string like "12 + 3"
+	private String currentProblemString(String currentText) {
+		// if no operator is selected yet, we only have the current entry
+		if (operator == null)
+			return currentText;
+		// show num1 operator current entry
+		// num1 is stored when you press +, -, ×, ÷
+		return num1 + " " + operator + " " + currentText;
+	}
+
+	// logs a standard message that includes what's on screen and the current
+	// "problem"
+	private void logStatus(String eventLabel) {
+		String currentText = display.getText();
+		System.out.println(
+			"[LOG] " + eventLabel +
+			" | display=" + currentText +
+			" | problem=" + currentProblemString(currentText)
+		);
+	}
 
 	public CalculatorGUI() {
 		setTitle("Simple calculator");
@@ -35,44 +60,79 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		// display component
 		// create a text field initialized with "0" as the starting value
 		display = new JTextField("0");
-		display.setFont(new Font("Arial", Font.BOLD, 20));
+		display.setFont(new Font("Consolas", Font.BOLD, 20));
 		// right-aligns numbers (like a real calculator would)
 		display.setHorizontalAlignment(JTextField.RIGHT);
 		// prevent user typing directly into the display
 		display.setEditable(false);
+		display.setBorder(BorderFactory.createCompoundBorder(
+			display.getBorder(),
+			BorderFactory.createEmptyBorder(10, 10, 10, 10)
+		));
 		// place this component in the NORTH region of BorderLayout, spanning
 		// full width at the top
 		add(display, BorderLayout.NORTH);
 
 		// buttons panel
-		// create panel using GridLayout with 5 rows, 4 cols and 5 px gaps
-		// between cells
-		JPanel buttonPanel = new JPanel(new GridLayout(5, 4, 5, 5));
+		// GridBagLayout allows components to span multiple rows or columns
+		// unlike GridLayout whcih forces all cells to be the same size
+		JPanel buttonPanel = new JPanel(new GridBagLayout());
 		// add 10 px padding around all edges
 		buttonPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+		// GridBagConstraints controls how each component is placed
+		GridBagConstraints gbc = new GridBagConstraints();
+		// make buttons expand to fill all available space in their grid cell
+		gbc.fill = GridBagConstraints.BOTH;
+		// spacing between buttons
+		gbc.insets = new Insets(5, 5, 5, 5);
+		// allow buttons to grow evenly when the window is resized
+		gbc.weightx = 1.0;
+		gbc.weighty = 1.0;
 
-		// fix how wide some of these should appear on the window later
-		String[] buttons = {
-			"C", "±", "%", "÷",
-			"7", "8", "9", "×",
-			"4", "5", "6", "-",
-			"1", "2", "3", "+",
-			"0", ".", "=",
+		// define the calculator layout as rows and columns
+		// null represents an empty cell (used as a filler)
+		String[][] grid = {
+			{ "C", "±", "%", "÷" },
+			{ "7", "8", "9", "×" },
+			{ "4", "5", "6", "-" },
+			{ "1", "2", "3", "+" },
+			{ "0", ".", "=", "." } // 0 will span two cols
 		};
 
-		for (String btnText : buttons) {
-			// create button object for each string in buttons array
-			JButton button = new JButton(btnText);
-			button.setFont(new Font("Arial", Font.BOLD, 18));
-			// `this` points to the CalculatorGUI instance as the event handler
-			// since the class CalculatorGUI implements ActionListener, every
-			// CalculatorGUI object automatically becomes an ActionListener
-			// see actionPerformed() below
-			button.addActionListener(this);
-			// add this button to the button panel
-			buttonPanel.add(button);
+		for (int row = 0; row < grid.length; row++) {
+			for (int col = 0; col < grid[row].length; col++) {
+				// get button label at this grid position
+				String text = grid[row][col];
+				// skip empty cells, used only for layout spacing
+				if (text == null) continue;
+
+				// create button object for each string in grid array
+				JButton button = new JButton(text);
+				button.setFont(new Font("Arial", Font.BOLD, 18));
+				// `this` points to the CalculatorGUI instance as the event handler
+				// since the class CalculatorGUI implements ActionListener, every
+				// CalculatorGUI object automatically becomes an ActionListener
+				// see actionPerformed() below
+				button.addActionListener(this);
+
+				// set button position
+				gbc.gridx = col;
+				gbc.gridy = row;
+
+				// make 0 button twice as wide
+				if ("0".equals(text)) gbc.gridwidth = 2;
+				else gbc.gridwidth = 1;
+
+				// add the button to the panel using the current constraints
+				buttonPanel.add(button, gbc);
+
+				// GridBagConstraints is reused, so we must reset gridwidth
+				// otherwise the next buttons would also span two columns
+				gbc.gridwidth = 1;
+			}
 		}
 
+		// add to center, change CENTER to something else if you want
 		add(buttonPanel, BorderLayout.CENTER);
 		setVisible(true);
 	}
@@ -104,23 +164,31 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		String currentText = display.getText();
 
 		if ("0123456789".contains(command)) {	// digit buttons
-			// number button
-			if (
-				currentText.equals("0") ||		// display shows "0"
-				currentText.equals("Error") ||	// error state
-				operator != null				// after operator (+, -, etc.)
-			) {
-				display.setText(command);		// replace display with number
-			} else {	// else append to existing number
-				display.setText(currentText + command);
+			if (startNewNumber) {
+				// replace display when starting a new number
+				display.setText(command);
+				startNewNumber = false;
+			} else {
+				// append digit to current number
+				display.setText(display.getText() + command);
+			}
+		} else if (".".equals(command)) {	// decimal point
+			if (startNewNumber) {
+				// start a new decimal number
+				display.setText("0.");
+				startNewNumber = false;
+			} else if (!display.getText().contains(".")) {
+				// only allow one decimal point
+				display.setText(display.getText() + ".");
 			}
 		} else if ("+-×÷".contains(command)) {	// operator buttons
 			// valid state check
 			if (!currentText.equals("0") && !currentText.equals("Error")) {
 				// store current display as first number
 				num1 = Double.parseDouble(currentText);
-				operator = command;		// remember which operator
-				display.setText("0");	// reset display for second number
+				operator = command;	// remember which operator
+				startNewNumber = true;
+				logStatus("Pressed operator " + command);
 			}
 		} else if ("=".equals(command)) {	// equals button
 			// valid state check
@@ -128,28 +196,43 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				try {
 					// get second number
 					num2 = Double.parseDouble(display.getText());
+					System.out.println(
+						"[LOG] Evaluating: " + num1 + " " +
+						operator + " " + num2
+					);
 					switch (operator) {	// perform calculation
 						case "+": result = num1 + num2; break;
 						case "-": result = num1 - num2; break;
 						case "×": result = num1 * num2; break;
 						case "÷":	// prevent division by 0
-							if (num2 != 0) result = num1 / num2;
-							else { display.setText("Error"); return; }
+							if (num2 == 0) {
+								display.setText("Error");
+								startNewNumber = true;
+								return;
+							}
+							result = num1 / num2;
 							break;
 					}
-					// format result to 2 decimal places
-					display.setText(String.format("%.2f", result));
+					// remove trailing .0 if the result is a whole number
+					if (result == (long) result)
+						display.setText(String.valueOf((long) result));
+					else
+						display.setText(String.valueOf(result));
+					System.out.println("[LOG] Result: " + display.getText());
 					// reset operator for new calculation
 					operator = null;
+					startNewNumber = true;
 				} catch (NumberFormatException ex) {
 					display.setText("Error");
 				}
 			}
 		} else if ("C".equals(command)) {
 			// clear
+			logStatus("Pressed C (clear)");
 			display.setText("0");
 			num1 = num2 = result = 0;
 			operator = null;
+			startNewNumber = true;
 		}
 	}
 
