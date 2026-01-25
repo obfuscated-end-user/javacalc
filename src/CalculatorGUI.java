@@ -6,11 +6,19 @@
  * 
  * TO-DO
  * - movable cursor in display x
- * - negative number support
+ * - negative number support x
  * - use keyboard for input x
  * - show current equation like "1 + 1" below the display x
- * - more functions
+ * - add sin, cos, tan, sec, csc, cot
+ * - nth root, exponents, factorials, (natural) logarithms, constants
+ * - binary, octal, decimal, hexadecimal notations
+ * - fraction support
+ * - modulo operator
+ * - parentheses and nesting expressions inside these
+ * - imaginary numbers
+ * - common formula templates
  * - some buttons don't really do anything
+ * - history queue
  * - proper javadocs
  */
 
@@ -118,6 +126,31 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				handleInput("C");
 			}
 		});
+
+		// backspace
+		im.put(KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SPACE, 0), "BACK");
+		am.put("BACK", new AbstractAction() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				String text = display.getText();
+				int pos = display.getCaretPosition();
+
+				// nothing to delete
+				if (text.isEmpty() || pos == 0) return;
+				// remove character before caret
+				String updated = text.substring(0, pos - 1) + text.substring(pos);
+				display.setText(updated);
+				// move caret back one position
+				display.setCaretPosition(pos - 1);
+
+				// if nothing left, show 0
+				if (display.getText().isEmpty()) {
+					display.setText("0");
+					display.setCaretPosition(1);
+					startNewNumber = true;
+				}
+			}
+		});
 	}
 
 	private void bind(InputMap im, ActionMap am, char key) {
@@ -129,13 +162,20 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		am.put(command, new AbstractAction() {
 			@Override
 			public void actionPerformed(ActionEvent e) {
-				CalculatorGUI.this.actionPerformed(
-					new ActionEvent(
-						CalculatorGUI.this,
-						ActionEvent.ACTION_PERFORMED,
-						command
-					)
-				);
+				if ("0123456789.".contains(command)) {
+					// digits and decimal go to display
+					CalculatorGUI.this.insertAtCaret(command);
+					startNewNumber = false;
+				} else {
+					// operators and equals just trigger this instead
+					CalculatorGUI.this.actionPerformed(
+						new ActionEvent(
+							CalculatorGUI.this,
+							ActionEvent.ACTION_PERFORMED,
+							command
+						)
+					);
+				}
 			}
 		});
 	}
@@ -257,7 +297,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 
 		// request focus after the frame is visible
 		SwingUtilities.invokeLater(() -> {
-			display.requestFocusInWindow();
+			buttonPanel.requestFocusInWindow();
 			display.setCaretPosition(display.getText().length());
 		});
 
@@ -356,6 +396,19 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 					display.setText("Error");
 				}
 			}
+		} else if ("±".equals(command)) {
+			String text = display.getText();
+			if (text.equals("0") || text.equals("Error")) return;	// nothing
+			if (startNewNumber) {
+				display.setText("-");
+				display.setCaretPosition(1);
+				startNewNumber = false;
+				return;
+			}
+			if (text.startsWith("-"))
+				display.setText(text.substring(1));	// remove negative sign
+			else
+				display.setText("-" + text);		// add negative sign
 		} else if ("C".equals(command)) {
 			// clear
 			logStatus("Pressed C (clear)");
