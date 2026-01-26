@@ -14,7 +14,7 @@
  * - binary, octal, decimal, hexadecimal notations
  * - fraction support
  * - modulo operator
- * - parentheses and nesting expressions inside these
+ * - parentheses and nesting expressions inside these (PEMDAS)
  * - imaginary numbers
  * - common formula templates
  * - some buttons don't really do anything
@@ -22,13 +22,20 @@
  * - proper javadocs
  * 
  * BUGS
- * - "." on keyboard doesn't work
- * - plus-minus button bugged (doesn't flip)
+ * - "." on keyboard doesn't work x
+ * - plus-minus button bugged (doesn't flip) x
+ * - parentheses evaluates to error x
+ * - plus-minus evaluates to error x
  */
 
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Stack;
+
+enum TokenType { NUMBER, OPERATOR, LPAREN, RPAREN }
 
 public class CalculatorGUI extends JFrame implements ActionListener {
 	private JTextField display;
@@ -40,6 +47,16 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 	// shows the current equation string
 	private JLabel equationLabel;
 	private StringBuilder expression = new StringBuilder();
+
+	static class Token {
+		TokenType type;
+		String value;
+
+		Token(TokenType type, String value) {
+			this.type = type;
+			this.value = value;
+		}
+	}
 
 	// builds a readable string like "12 + 3"
 	private String currentProblemString(String currentText) {
@@ -59,6 +76,8 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 
 	// formats a number to force to an int if that number is a whole number
 	private String formatNumber(double value) {
+		// prevents things like "1 / 0 = 9223372036854775807"
+		if (Double.isInfinite(value) || Double.isNaN(value)) return "Error";
 		// if the value is mathematically an integer, drop the .0
 		if (value == Math.rint(value)) return String.valueOf((long) value);
 		// otherwise return as-is
@@ -90,7 +109,13 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		bind(im, am, '-');
 		bind(im, am, '*', "×");
 		bind(im, am, '/', "÷");
-		bind(im, am, '.');
+
+		// decimal point
+		im.put(KeyStroke.getKeyStroke(KeyEvent.VK_PERIOD, 0), ".");
+		am.put(".", new AbstractAction() {
+			@Override
+			public void actionPerformed(ActionEvent e) { handleInput("."); }
+		});
 
 		// equals
 		im.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "=");
@@ -104,6 +129,18 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		am.put("C", new AbstractAction() {
 			@Override
 			public void actionPerformed(ActionEvent e) { handleInput("C"); }
+		});
+
+		// parentheses
+		im.put(KeyStroke.getKeyStroke(KeyEvent.VK_9, InputEvent.SHIFT_DOWN_MASK), "(");
+		am.put("(", new AbstractAction() {
+			@Override
+			public void actionPerformed(ActionEvent e) { handleInput("("); }
+		});
+		im.put(KeyStroke.getKeyStroke(KeyEvent.VK_0, InputEvent.SHIFT_DOWN_MASK), ")");
+		am.put(")", new AbstractAction() {
+			@Override
+			public void actionPerformed(ActionEvent e) { handleInput(")"); }
 		});
 
 		// backspace
@@ -140,27 +177,130 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		});
 	}
 
-	private double evaluateSimpleExpression(String expr) {
-		String[] tokens = expr.split(" ");
-		double value = Double.parseDouble(tokens[0]);
+	private double evaluateExpression(String expr) {
+		var tokens = tokenize(expr);
+		var postfix = toPostFix(tokens);
+		return evaluatePostfix(postfix);
+	}
 
-		for (int i = 1; i < tokens.length; i += 2) {
-			String op = tokens[i];
-			double next = Double.parseDouble(tokens[i + 1]);
+	private List<Token> tokenize(String expr) {
+		List<Token> tokens = new ArrayList<>();
+		int i = 0;
 
-			switch (op) {
-				case "+": value += next; break;
-				case "-": value -= next; break;
-				case "*": value *= next; break;
-				case "/": value /= next; break;
+		while (i < expr.length()) {
+			char c = expr.charAt(i);
+
+			if (Character.isWhitespace(c)) {
+				i++;
+				continue;
+			}
+
+			// number (supports decimals)
+			if (Character.isDigit(c) || c == '.') {
+				StringBuilder num = new StringBuilder();
+				while(i < expr.length() && (Character.isDigit(expr.charAt(i)) || expr.charAt(i) == '.'))
+					num.append(expr.charAt(i++));
+				tokens.add(new Token(TokenType.NUMBER, num.toString()));
+				continue;
+			}
+			// unary minus handling
+			if (c == '-' && (tokens.isEmpty() || tokens.get(tokens.size() - 1).type == TokenType.OPERATOR || tokens.get(tokens.size() - 1).type == TokenType.LPAREN)) {
+				StringBuilder num = new StringBuilder("-");
+				i++;
+				while (i < expr.length() && (Character.isDigit(expr.charAt(i)) || expr.charAt(i) == '.'))
+					num.append(expr.charAt(i++));
+
+				tokens.add(new Token(TokenType.NUMBER, num.toString()));
+				continue;
+			}
+			// operators
+			if ("+-*/".indexOf(c) != -1) {
+				tokens.add(new Token(TokenType.OPERATOR, String.valueOf(c)));
+				i++;
+				continue;
+			}
+			if (c == '(') {
+				tokens.add(new Token(TokenType.LPAREN, "("));
+				i++;
+				continue;
+			}
+			if (c == ')') {
+				tokens.add(new Token(TokenType.RPAREN, ")"));
+				i++;
+				continue;
+			}
+			throw new IllegalArgumentException("Invalid character: " + c);
+		}
+		return tokens;
+	}
+
+	private int precedence(String op) {
+		return switch (op) {
+			case "+", "-" -> 1;
+			case "*", "/" -> 2;
+			default -> 0;
+		};
+	}
+
+	private List<Token> toPostFix(List<Token> tokens) {
+		List<Token> output = new ArrayList<>();
+		Stack<Token> ops = new Stack<>();
+
+		for (Token t : tokens) {
+			switch (t.type) {
+				case NUMBER -> output.add(t);
+				case OPERATOR -> {
+					while (!ops.isEmpty() && ops.peek().type == TokenType.OPERATOR && precedence(ops.peek().value) >= precedence(t.value))
+						output.add(ops.pop());
+					ops.push(t);
+				}
+				case LPAREN -> ops.push(t);
+				case RPAREN -> {
+					while (!ops.isEmpty() && ops.peek().type != TokenType.LPAREN)
+						output.add(ops.pop());
+					if (ops.isEmpty())
+						throw new IllegalArgumentException("Mismatched parentheses");
+					ops.pop();
+				}
 			}
 		}
 
-		return value;
+		while (!ops.isEmpty()) {
+			if (ops.peek().type == TokenType.LPAREN)
+				throw new IllegalArgumentException("Mismatched parentheses");
+			output.add(ops.pop());
+		}
+
+		return output;
+	}
+
+	private double evaluatePostfix(List<Token> postfix) {
+		Stack<Double> stack = new Stack<>();
+
+		for (Token t : postfix) {
+			if (t.type == TokenType.NUMBER)
+				stack.push(Double.parseDouble(t.value));
+			else {	// order matters here, DO NOT SWAP!
+				double b = stack.pop();
+				double a = stack.pop();
+
+				switch (t.value) {
+					case "+" -> stack.push(a + b);
+					case "-" -> stack.push(a - b);
+					case "*" -> stack.push(a * b);
+					case "/" -> {
+						if (b == 0) throw new ArithmeticException("Division by zero");
+						stack.push(a / b);
+					}
+				}
+			}
+		}
+
+		return stack.pop();
 	}
 
 	public CalculatorGUI() {
-		setTitle("Simple calculator");
+		setTitle("JavaCalc");
 		// terminate completely when X is clicked
 		setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
 		// Every Swing container needs a layout manager to control component positioning and sizing. `setLayout()`
@@ -223,6 +363,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		// null represents an empty cell (used as a filler)
 		String[][] grid = {
 			{ "C", "±", "%", "÷" },
+			{ "(", ")", null, null },	// placeholders
 			{ "7", "8", "9", "×" },
 			{ "4", "5", "6", "-" },
 			{ "1", "2", "3", "+" },
@@ -319,10 +460,14 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 			expression.append(" ").append(command).append(" ");
 			display.setText(expression.toString());
 			startNewNumber = true;
+		} else if ("()".contains(command)) {
+			expression.append(command);
+			display.setText(expression.toString());
+			startNewNumber = false;
 		} else if ("=".equals(command)) {	// equals button
 			try {
 				String expr = expression.toString().replace("×", "*").replace("÷", "/");
-				double result = evaluateSimpleExpression(expr);
+				double result = evaluateExpression(expr);
 
 				display.setText(formatNumber(result));
 				equationLabel.setText(expression + " =");
@@ -334,26 +479,29 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				expression.setLength(0);
 			}
 		} else if ("±".equals(command)) {
-			if (expression.length() == 0) {
-				expression.append("-");
+			if (expression.length() == 0) return;
+			try {
+				// find start of current number
+				int lastOp = Math.max(
+					Math.max(expression.lastIndexOf("+"), expression.lastIndexOf("×")),
+					Math.max(expression.lastIndexOf("÷"), expression.lastIndexOf("- "))
+				);
+				int start = lastOp == -1 ? 0 : lastOp + 1;
+				// skip process
+				while (start < expression.length() && expression.charAt(start) == ' ') start++;
+
+				// fixes the stacked negative signs thing ("-----1")
+				if (expression.charAt(start) == '-')	// already negative
+					expression.deleteCharAt(start);		// make positive
+				else expression.insert(start, '-');		// else the other way around
+
+				// if (expression.charAt(start) == '-') expression.deleteCharAt(start);
+				// else expression.insert(start, '-');
+
 				display.setText(expression.toString());
-				startNewNumber = false;
+			} catch (Exception ex) {
 				return;
 			}
-			// find start of current number
-			int lastOp = Math.max(
-				Math.max(expression.lastIndexOf("+"), expression.lastIndexOf("-")),
-				Math.max(expression.lastIndexOf("×"), expression.lastIndexOf("÷"))
-			);
-			int start = lastOp == -1 ? 0 : lastOp + 1;
-			// skip process
-			while (start < expression.length() && expression.charAt(start) == ' ') start++;
-
-			// toggle sign
-			if (expression.charAt(start) == '-') expression.deleteCharAt(start);
-			else expression.insert(start, '-');
-
-			display.setText(expression.toString());
 		} else if ("C".equals(command)) {
 			// clear
 			logStatus("Pressed C (clear)");
