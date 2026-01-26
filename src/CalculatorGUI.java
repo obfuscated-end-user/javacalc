@@ -5,7 +5,7 @@
  * javac 22.0.2
  * 
  * TO-DO
- * - movable cursor in display x
+ * - movable cursor in display (mutually exclusive with your approach rn, try again later)
  * - negative number support x
  * - use keyboard for input x
  * - show current equation like "1 + 1" below the display x
@@ -20,6 +20,10 @@
  * - some buttons don't really do anything
  * - history queue
  * - proper javadocs
+ * 
+ * BUGS
+ * - "." on keyboard doesn't work
+ * - plus-minus button bugged (doesn't flip)
  */
 
 import javax.swing.*;
@@ -35,6 +39,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 	private boolean startNewNumber = true;
 	// shows the current equation string
 	private JLabel equationLabel;
+	private StringBuilder expression = new StringBuilder();
 
 	// builds a readable string like "12 + 3"
 	private String currentProblemString(String currentText) {
@@ -45,44 +50,24 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		return num1 + " " + operator + " " + currentText;
 	}
 
-	// logs a standard message that includes what's on screen and the current
-	// "problem"
+	// logs a standard message that includes what's on screen and the current "problem"
 	private void logStatus(String eventLabel) {
 		String currentText = display.getText();
-		System.out.println(
-			"[LOG] " + eventLabel +
-			" | display=" + currentText +
-			" | problem=" + currentProblemString(currentText)
-		);
+		System.out.println("[LOG] " + eventLabel + " | display=" + currentText +
+			" | problem=" + currentProblemString(currentText));
 	}
 
 	// formats a number to force to an int if that number is a whole number
 	private String formatNumber(double value) {
 		// if the value is mathematically an integer, drop the .0
-		if (value == Math.rint(value))
-			return String.valueOf((long) value);
-
+		if (value == Math.rint(value)) return String.valueOf((long) value);
 		// otherwise return as-is
 		return String.valueOf(value);
 	}
 
-	// inserts text at the current caret position
-	private void insertAtCaret(String text) {
-		int pos = display.getCaretPosition();
-		String current = display.getText();
-
-		// build new string w/ insertion
-		String updated = current.substring(0, pos) + text + current.substring(pos);
-		display.setText(updated);
-		// move caret after inserted text
-		display.setCaretPosition(pos + text.length());
-	}
-
 	// routes keyboard input into the same path as button presses
 	private void handleInput(String command) {
-		actionPerformed(
-			new ActionEvent(this, ActionEvent.ACTION_PERFORMED, command)
-		);
+		actionPerformed(new ActionEvent(this, ActionEvent.ACTION_PERFORMED, command));
 	}
 
 	private void setupKeyBindings() {
@@ -96,9 +81,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 			im.put(KeyStroke.getKeyStroke(c), key);
 			am.put(key, new AbstractAction() {
 				@Override
-				public void actionPerformed(ActionEvent e) {
-					handleInput(key);
-				}
+				public void actionPerformed(ActionEvent e) { handleInput(key); }
 			});
 		}
 
@@ -113,18 +96,14 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		im.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "=");
 		am.put("=", new AbstractAction() {
 			@Override
-			public void actionPerformed(ActionEvent e) {
-				handleInput("=");
-			}
+			public void actionPerformed(ActionEvent e) { handleInput("="); }
 		});
 
 		// escape - clear
 		im.put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "C");
 		am.put("C", new AbstractAction() {
 			@Override
-			public void actionPerformed(ActionEvent e) {
-				handleInput("C");
-			}
+			public void actionPerformed(ActionEvent e) { handleInput("C"); }
 		});
 
 		// backspace
@@ -133,61 +112,60 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 			@Override
 			public void actionPerformed(ActionEvent e) {
 				String text = display.getText();
-				int pos = display.getCaretPosition();
 
 				// nothing to delete
-				if (text.isEmpty() || pos == 0) return;
+				// if (text.isEmpty() || pos == 0) return;
+				if (text.isEmpty()) return;
 				// remove character before caret
-				String updated = text.substring(0, pos - 1) + text.substring(pos);
+				// String updated = text.substring(0, pos - 1);
+				String updated = text.substring(0);
 				display.setText(updated);
-				// move caret back one position
-				display.setCaretPosition(pos - 1);
 
 				// if nothing left, show 0
 				if (display.getText().isEmpty()) {
 					display.setText("0");
-					display.setCaretPosition(1);
 					startNewNumber = true;
 				}
 			}
 		});
 	}
 
-	private void bind(InputMap im, ActionMap am, char key) {
-		bind(im, am, key, String.valueOf(key));
-	}
+	private void bind(InputMap im, ActionMap am, char key) { bind(im, am, key, String.valueOf(key)); }
 
 	private void bind(InputMap im, ActionMap am, char key, String command) {
 		im.put(KeyStroke.getKeyStroke(key), command);
 		am.put(command, new AbstractAction() {
 			@Override
-			public void actionPerformed(ActionEvent e) {
-				if ("0123456789.".contains(command)) {
-					// digits and decimal go to display
-					CalculatorGUI.this.insertAtCaret(command);
-					startNewNumber = false;
-				} else {
-					// operators and equals just trigger this instead
-					CalculatorGUI.this.actionPerformed(
-						new ActionEvent(
-							CalculatorGUI.this,
-							ActionEvent.ACTION_PERFORMED,
-							command
-						)
-					);
-				}
-			}
+			public void actionPerformed(ActionEvent e) { handleInput(command); }
 		});
+	}
+
+	private double evaluateSimpleExpression(String expr) {
+		String[] tokens = expr.split(" ");
+		double value = Double.parseDouble(tokens[0]);
+
+		for (int i = 1; i < tokens.length; i += 2) {
+			String op = tokens[i];
+			double next = Double.parseDouble(tokens[i + 1]);
+
+			switch (op) {
+				case "+": value += next; break;
+				case "-": value -= next; break;
+				case "*": value *= next; break;
+				case "/": value /= next; break;
+			}
+		}
+
+		return value;
 	}
 
 	public CalculatorGUI() {
 		setTitle("Simple calculator");
 		// terminate completely when X is clicked
 		setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-		// Every Swing container needs a layout manager to control component
-		// positioning and sizing. setLayout() configures the JFrame to use
-		// BorderLayout, which divides the container into five regions, NORTH,
-		// SOUTH, EAST, WEST and CENTER.
+		// Every Swing container needs a layout manager to control component positioning and sizing. `setLayout()`
+		// configures the JFrame to use BorderLayout, which divides the container into five regions, NORTH, SOUTH, EAST,
+		// WEST and CENTER.
 		setLayout(new BorderLayout());
 		setSize(300, 400);
 
@@ -197,9 +175,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		display.setFont(new Font("Consolas", Font.BOLD, 20));
 		// right-aligns numbers (like a real calculator would)
 		display.setHorizontalAlignment(JTextField.RIGHT);
-		// allow caret (cursor) movement and insertion
-		display.setEditable(true);
-		// show caret even when not focused
+		display.setEditable(false);
 		display.setCaretColor(Color.BLACK);
 		display.setFocusable(true);
 		display.setBorder(BorderFactory.createCompoundBorder(
@@ -209,9 +185,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		// disable keyboard input but keep caret functionality
 		display.addKeyListener(new KeyAdapter() {
 			@Override
-			public void keyTyped(KeyEvent e) {
-				e.consume();	// ignore typed characters
-			}
+			public void keyTyped(KeyEvent e) { e.consume(); }	// ignore typed characters
 		});
 		// panel to hold equation (top) + main display (bottom)
 		JPanel displayPanel = new JPanel();
@@ -222,9 +196,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		equationLabel.setHorizontalAlignment(SwingConstants.RIGHT);
 		equationLabel.setForeground(Color.GRAY);
 		// add some padding so it aligns with the display text
-		equationLabel.setBorder(
-			BorderFactory.createEmptyBorder(5, 10, 10, 10)
-		);
+		equationLabel.setBorder(BorderFactory.createEmptyBorder(5, 10, 10, 10));
 		// add components to the display panel
 		displayPanel.add(equationLabel, BorderLayout.NORTH);
 		displayPanel.add(display, BorderLayout.CENTER);
@@ -232,8 +204,8 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		add(displayPanel, BorderLayout.NORTH);
 
 		// buttons panel
-		// GridBagLayout allows components to span multiple rows or columns
-		// unlike GridLayout whcih forces all cells to be the same size
+		// GridBagLayout allows components to span multiple rows or columns, unlike GridLayout whcih forces all cells to
+		// be the same size
 		JPanel buttonPanel = new JPanel(new GridBagLayout());
 		// add 10 px padding around all edges
 		buttonPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
@@ -254,7 +226,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 			{ "7", "8", "9", "×" },
 			{ "4", "5", "6", "-" },
 			{ "1", "2", "3", "+" },
-			{ "0", ".", "=", "." } // 0 will span two cols
+			{ "0", null, ".", "=" } // 0 will span two cols
 		};
 
 		for (int row = 0; row < grid.length; row++) {
@@ -268,9 +240,8 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				JButton button = new JButton(text);
 				// button.setFocusable(false);
 				button.setFont(new Font("Tahoma", Font.BOLD, 18));
-				// `this` points to the CalculatorGUI instance as the event handler
-				// since the class CalculatorGUI implements ActionListener, every
-				// CalculatorGUI object automatically becomes an ActionListener
+				// `this` points to the CalculatorGUI instance as the event handler since the class CalculatorGUI
+				// implements ActionListener, every CalculatorGUI object automatically becomes an ActionListener
 				// see actionPerformed() below
 				button.addActionListener(this);
 
@@ -285,8 +256,8 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				// add the button to the panel using the current constraints
 				buttonPanel.add(button, gbc);
 
-				// GridBagConstraints is reused, so we must reset gridwidth
-				// otherwise the next buttons would also span two columns
+				// GridBagConstraints is reused, so we must reset gridwidth, otherwise the next buttons would also span
+				// two columns
 				gbc.gridwidth = 1;
 			}
 		}
@@ -296,10 +267,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		setVisible(true);
 
 		// request focus after the frame is visible
-		SwingUtilities.invokeLater(() -> {
-			buttonPanel.requestFocusInWindow();
-			display.setCaretPosition(display.getText().length());
-		});
+		SwingUtilities.invokeLater(() -> { buttonPanel.requestFocusInWindow(); });
 
 		setVisible(true);
 		setupKeyBindings();
@@ -318,100 +286,78 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 
 		if ("0123456789".contains(command)) {	// digit buttons
 			if (startNewNumber) {
-				// start a new number and place caret at the end
-				display.setText(command);
-				display.setCaretPosition(command.length());
+				expression.append(command);
+				display.setText(expression.toString());
 				startNewNumber = false;
 			} else {
-				// append digit to current number
-				// display.setText(display.getText() + command);
-				// insert digit at caret position
-				insertAtCaret(command);
+				expression.append(command);
+				display.setText(expression.toString());
 			}
 		} else if (".".equals(command)) {	// decimal point
-			String text = display.getText();
-			// only allow one decimal point
-			if (text.contains(".")) return;
-			if (startNewNumber) {
-				// start a new decimal number
-				display.setText("0.");
-				// "0" at idx 0, "." at 1, so insert at 2
-				display.setCaretPosition(2);
-				startNewNumber = false;
-			} else if (!display.getText().contains(".")) {
-				// only allow one decimal point
-				display.setText(display.getText() + ".");
-			}
+			// find last operator to isolate current number
+			int lastOp = Math.max(
+				Math.max(expression.lastIndexOf("+"), expression.lastIndexOf("-")),
+				Math.max(expression.lastIndexOf("×"), expression.lastIndexOf("÷"))
+			);
+			String currentNumber = lastOp == -1 ? expression.toString() : expression.substring(lastOp + 1).trim();
+
+			// prevent multiple decimals in some number
+			if (currentNumber.contains(".")) return;
+
+			if (startNewNumber || expression.length() == 0) expression.append("0.");
+			else expression.append(".");
+
+			display.setText(expression.toString());
+			startNewNumber = false;
 		} else if ("+-×÷".contains(command)) {	// operator buttons
-			// valid state check
-			if (!currentText.equals("0") && !currentText.equals("Error")) {
-				// store current display as first number
-				num1 = Double.parseDouble(currentText);
-				operator = command;	// remember which operator
-				equationLabel.setText(currentText + " " + operator);
-				startNewNumber = true;
-				logStatus("Pressed operator " + command);
-			}
+			if (expression.length() == 0) return;
+
+			// prevent double operators
+			char last = expression.charAt(expression.length() - 1);
+			if ("+-×÷ ".indexOf(last) != -1) return;
+
+			expression.append(" ").append(command).append(" ");
+			display.setText(expression.toString());
+			startNewNumber = true;
 		} else if ("=".equals(command)) {	// equals button
-			// valid state check
-			if (operator != null && !currentText.equals("Error")) {
-				try {
-					// get second number
-					num2 = Double.parseDouble(display.getText());
-					equationLabel.setText(
-						formatNumber(num1) + " " + operator + " " +
-						formatNumber(num2) + " ="
-					);
-					System.out.println(
-						"[LOG] Evaluating: " + num1 + " " +
-						operator + " " + num2
-					);
-					switch (operator) {	// perform calculation
-						case "+": result = num1 + num2; break;
-						case "-": result = num1 - num2; break;
-						case "×": result = num1 * num2; break;
-						case "÷":	// prevent division by 0
-							if (num2 == 0) {
-								display.setText("Error");
-								startNewNumber = true;
-								return;
-							}
-							result = num1 / num2;
-							break;
-					}
-					// remove trailing .0 if the result is a whole number
-					if (result == (long) result)
-						display.setText(String.valueOf((long) result));
-					else
-						display.setText(String.valueOf(result));
-					System.out.println("[LOG] Result: " + display.getText());
-					equationLabel.setText(
-						formatNumber(num1) + " " + operator + " " +
-						formatNumber(num2) + " = " + display.getText()
-					);
-					// reset operator for new calculation
-					operator = null;
-					startNewNumber = true;
-				} catch (NumberFormatException ex) {
-					display.setText("Error");
-				}
+			try {
+				String expr = expression.toString().replace("×", "*").replace("÷", "/");
+				double result = evaluateSimpleExpression(expr);
+
+				display.setText(formatNumber(result));
+				equationLabel.setText(expression + " =");
+				expression.setLength(0);	// reset
+				expression.append(formatNumber(result));
+				startNewNumber = true;
+			} catch (Exception ex) {
+				display.setText("Error");
+				expression.setLength(0);
 			}
 		} else if ("±".equals(command)) {
-			String text = display.getText();
-			if (text.equals("0") || text.equals("Error")) return;	// nothing
-			if (startNewNumber) {
-				display.setText("-");
-				display.setCaretPosition(1);
+			if (expression.length() == 0) {
+				expression.append("-");
+				display.setText(expression.toString());
 				startNewNumber = false;
 				return;
 			}
-			if (text.startsWith("-"))
-				display.setText(text.substring(1));	// remove negative sign
-			else
-				display.setText("-" + text);		// add negative sign
+			// find start of current number
+			int lastOp = Math.max(
+				Math.max(expression.lastIndexOf("+"), expression.lastIndexOf("-")),
+				Math.max(expression.lastIndexOf("×"), expression.lastIndexOf("÷"))
+			);
+			int start = lastOp == -1 ? 0 : lastOp + 1;
+			// skip process
+			while (start < expression.length() && expression.charAt(start) == ' ') start++;
+
+			// toggle sign
+			if (expression.charAt(start) == '-') expression.deleteCharAt(start);
+			else expression.insert(start, '-');
+
+			display.setText(expression.toString());
 		} else if ("C".equals(command)) {
 			// clear
 			logStatus("Pressed C (clear)");
+			expression.setLength(0);
 			display.setText("0");
 			equationLabel.setText(" ");
 			num1 = num2 = result = 0;
@@ -423,10 +369,9 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 	// safely launch GUI on event dispatch thread (EDT)
 	public static void main(String[] args) {
 		// all Swing things must happen on the EDT
-		// main() runs on a different thread, so SwingUtilities.invokeLater()
-		// schedules the new CalculatorGUI to execute on the EDT
-		// `() -> new CalculatorGUI()` is a lambda expression implementing
-		// a Runnable
+		// main() runs on a different thread, so SwingUtilities.invokeLater() schedules the new CalculatorGUI to execute
+		// on the EDT
+		// `() -> new CalculatorGUI()` is a lambda expression implementing a Runnable
 		SwingUtilities.invokeLater(() -> new CalculatorGUI());
 	}
 }
