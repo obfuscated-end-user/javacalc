@@ -9,35 +9,39 @@
  * - negative number support x
  * - use keyboard for input x
  * - show current equation like "1 + 1" below the display x
- * - add sin, cos, tan, sec, csc, cot
+ * - add sin, cos, tan, sec, csc, cot x
+ * - add degrees to radians and vice versa
  * - nth root, exponents, factorials, (natural) logarithms, constants
  * - binary, octal, decimal, hexadecimal notations
  * - fraction support
- * - modulo operator
- * - parentheses and nesting expressions inside these (PEMDAS)
+ * - modulo operator x
+ * - parentheses and nesting expressions inside these (PEMDAS) x
  * - imaginary numbers
  * - common formula templates
  * - some buttons don't really do anything
  * - history queue
  * - proper javadocs
+ * - clipboard support
  * 
  * BUGS
  * - "." on keyboard doesn't work x
  * - plus-minus button bugged (doesn't flip) x
  * - parentheses evaluates to error x
  * - plus-minus evaluates to error x
+ * - backspace doesn't work x
  */
 
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
-import java.math.BigDecimal;
+import java.math.BigDecimal;	// because doubles aren't enough
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.Stack;
 
-enum TokenType { NUMBER, OPERATOR, LPAREN, RPAREN }
+enum TokenType { NUMBER, OPERATOR, FUNCTION, LPAREN, RPAREN }
 
 public class CalculatorGUI extends JFrame implements ActionListener {
 	private JTextField display;
@@ -49,6 +53,8 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 	// shows the current equation string
 	private JLabel equationLabel;
 	private StringBuilder expression = new StringBuilder();
+	// not just for trig but you can worry about that later
+	private static final Set<String> TRIG_FUNCTIONS = Set.of("sin", "cos", "tan", "csc", "sec", "cot");
 
 	static class Token {
 		TokenType type;
@@ -147,20 +153,20 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		am.put("BACK", new AbstractAction() {
 			@Override
 			public void actionPerformed(ActionEvent e) {
-				String text = display.getText();
+				if (expression.length() == 0) return;
 
-				// nothing to delete
-				// if (text.isEmpty() || pos == 0) return;
-				if (text.isEmpty()) return;
-				// remove character before caret
-				// String updated = text.substring(0, pos - 1);
-				String updated = text.substring(0);
-				display.setText(updated);
+				// delete last character
+				expression.deleteCharAt(expression.length() - 1);
+				// clean up trailing spaces for operators
+				while (expression.length() > 0 && expression.charAt(expression.length() - 1) == ' ')
+					expression.deleteCharAt(expression.length() - 1);
 
-				// if nothing left, show 0
-				if (display.getText().isEmpty()) {
+				if (expression.length() == 0) {
 					display.setText("0");
 					startNewNumber = true;
+				} else {
+					display.setText(expression.toString());
+					startNewNumber = false;
 				}
 			}
 		});
@@ -199,7 +205,9 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				StringBuilder num = new StringBuilder();
 				while(i < expr.length() && (Character.isDigit(expr.charAt(i)) || expr.charAt(i) == '.'))
 					num.append(expr.charAt(i++));
-				tokens.add(new Token(TokenType.NUMBER, num.toString()));
+				Token t = new Token(TokenType.NUMBER, num.toString());
+				maybeInsertImplicitMultiply(tokens, t);
+				tokens.add(t);
 				continue;
 			}
 			// unary minus handling
@@ -211,7 +219,6 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				i++;
 				while (i < expr.length() && (Character.isDigit(expr.charAt(i)) || expr.charAt(i) == '.'))
 					num.append(expr.charAt(i++));
-
 				tokens.add(new Token(TokenType.NUMBER, num.toString()));
 				continue;
 			}
@@ -221,8 +228,11 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				i++;
 				continue;
 			}
+			// parentheses
 			if (c == '(') {
-				tokens.add(new Token(TokenType.LPAREN, "("));
+				Token t = new Token(TokenType.LPAREN, "(");
+				maybeInsertImplicitMultiply(tokens, t);
+				tokens.add(t);
 				i++;
 				continue;
 			}
@@ -231,13 +241,27 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				i++;
 				continue;
 			}
+			// function names (sin, cos, tan, etc.)
+			if (Character.isLetter(c)) {
+				StringBuilder name = new StringBuilder();
+				while (i < expr.length() && Character.isLetter(expr.charAt(i)))
+					name.append(expr.charAt(i++));
+				String func = name.toString().toLowerCase();
+				Token t = new Token(TokenType.FUNCTION, func);
+				maybeInsertImplicitMultiply(tokens, t);
+				tokens.add(t);
+				continue;
+			}
 			throw new IllegalArgumentException("Invalid character: " + c);
 		}
 		return tokens;
 	}
 
-	private int precedence(String op) {
-		return switch (op) {
+	private int precedence(Token t) {
+		if (t.type == TokenType.FUNCTION) return 3;
+		if (t.type != TokenType.OPERATOR) return 0;
+
+		return switch (t.value) {
 			case "+", "-" -> 1;
 			case "*", "/", "%" -> 2;
 			default -> 0;
@@ -253,8 +277,8 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				case NUMBER -> output.add(t);
 				case OPERATOR -> {
 					while (
-						!ops.isEmpty() && ops.peek().type == TokenType.OPERATOR &&
-						precedence(ops.peek().value) >= precedence(t.value)
+						!ops.isEmpty() && (ops.peek().type == TokenType.OPERATOR || ops.peek().type == TokenType.FUNCTION) &&
+						precedence(ops.peek()) >= precedence(t)
 					)
 						output.add(ops.pop());
 					ops.push(t);
@@ -263,16 +287,18 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				case RPAREN -> {
 					while (!ops.isEmpty() && ops.peek().type != TokenType.LPAREN)
 						output.add(ops.pop());
-					if (ops.isEmpty())
-						throw new IllegalArgumentException("Mismatched parentheses");
+					if (ops.isEmpty()) throw new IllegalArgumentException("Mismatched parentheses");
 					ops.pop();
+					// if function is on top pop it too
+					if (!ops.isEmpty() && ops.peek().type == TokenType.FUNCTION)
+						output.add(ops.pop());
 				}
+				case FUNCTION -> ops.push(t);
 			}
 		}
 
 		while (!ops.isEmpty()) {
-			if (ops.peek().type == TokenType.LPAREN)
-				throw new IllegalArgumentException("Mismatched parentheses");
+			if (ops.peek().type == TokenType.LPAREN) throw new IllegalArgumentException("Mismatched parentheses");
 			output.add(ops.pop());
 		}
 
@@ -285,7 +311,23 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		for (Token t : postfix) {
 			if (t.type == TokenType.NUMBER)
 				stack.push(new BigDecimal(t.value));
-			else {	// order matters here, DO NOT SWAP!
+			else if (t.type == TokenType.FUNCTION) {
+				BigDecimal a = stack.pop();
+				double radians = Math.toRadians(a.doubleValue());
+				double result;
+
+				switch (t.value) {
+					case "sin" -> result = Math.sin(radians);
+					case "cos" -> result = Math.cos(radians);
+					case "tan" -> result = Math.tan(radians);
+					case "sec" -> result = 1.0 / Math.cos(radians);
+					case "csc" -> result = 1.0 / Math.sin(radians);
+					case "cot" -> result = 1.0 / Math.tan(radians);
+					default -> throw new IllegalArgumentException("Unknown function: " + t.value);
+				}
+
+				stack.push(BigDecimal.valueOf(result));
+			} else {	// order matters here, DO NOT SWAP!
 				BigDecimal b = stack.pop();
 				BigDecimal a = stack.pop();
 
@@ -306,6 +348,17 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		}
 
 		return stack.pop();
+	}
+
+	private void maybeInsertImplicitMultiply(List<Token> tokens, Token next) {
+		if (tokens.isEmpty()) return;
+
+		Token prev = tokens.get(tokens.size() - 1);
+
+		boolean implicit = (prev.type == TokenType.NUMBER || prev.type == TokenType.RPAREN) && (next.type == TokenType.LPAREN || next.type == TokenType.NUMBER);
+
+		if (implicit)
+			tokens.add(new Token(TokenType.OPERATOR, "*"));
 	}
 
 	public CalculatorGUI() {
@@ -371,12 +424,12 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		// define the calculator layout as rows and columns
 		// null represents an empty cell (used as a filler)
 		String[][] grid = {
-			{ "C", "±", "%", "÷", "sin"},
-			{ "(", ")", null, null },	// placeholders
-			{ "7", "8", "9", "×" },
-			{ "4", "5", "6", "-" },
-			{ "1", "2", "3", "+" },
-			{ "0", null, ".", "=" } // 0 will span two cols
+			{ "C", "±", "%", null, "sin", "cos", "tan"},
+			{ "(", ")", null, null, "csc", "sec", "cot" },	// placeholders
+			{ "7", "8", "9", "÷" },
+			{ "4", "5", "6", "×" },
+			{ "1", "2", "3", "-" },
+			{ "0", ".", "=", "+" } // 0 will span two cols
 		};
 
 		for (int row = 0; row < grid.length; row++) {
@@ -400,8 +453,8 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				gbc.gridy = row;
 
 				// make 0 button twice as wide
-				if ("0".equals(text)) gbc.gridwidth = 2;
-				else gbc.gridwidth = 1;
+				// if ("0".equals(text)) gbc.gridwidth = 2;
+				// else gbc.gridwidth = 1;
 
 				// add the button to the panel using the current constraints
 				buttonPanel.add(button, gbc);
@@ -467,6 +520,10 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 			if ("+-×÷ ".indexOf(last) != -1) return;
 
 			expression.append(" ").append(command).append(" ");
+			display.setText(expression.toString());
+			startNewNumber = true;
+		} else if (TRIG_FUNCTIONS.contains(command)) {	// trigonemetric functions
+			expression.append(command).append("(");
 			display.setText(expression.toString());
 			startNewNumber = true;
 		} else if ("()".contains(command)) {
