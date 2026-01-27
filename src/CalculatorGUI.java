@@ -31,6 +31,8 @@
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Stack;
@@ -75,13 +77,9 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 	}
 
 	// formats a number to force to an int if that number is a whole number
-	private String formatNumber(double value) {
-		// prevents things like "1 / 0 = 9223372036854775807"
-		if (Double.isInfinite(value) || Double.isNaN(value)) return "Error";
-		// if the value is mathematically an integer, drop the .0
-		if (value == Math.rint(value)) return String.valueOf((long) value);
-		// otherwise return as-is
-		return String.valueOf(value);
+	private String formatNumber(BigDecimal value) {
+		if (value == null) return "Error";
+    	return value.stripTrailingZeros().toPlainString(); // exact decimal display
 	}
 
 	// routes keyboard input into the same path as button presses
@@ -109,6 +107,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		bind(im, am, '-');
 		bind(im, am, '*', "×");
 		bind(im, am, '/', "÷");
+		bind(im, am, '%');
 
 		// decimal point
 		im.put(KeyStroke.getKeyStroke(KeyEvent.VK_PERIOD, 0), ".");
@@ -177,7 +176,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		});
 	}
 
-	private double evaluateExpression(String expr) {
+	private BigDecimal evaluateExpression(String expr) {
 		var tokens = tokenize(expr);
 		var postfix = toPostFix(tokens);
 		return evaluatePostfix(postfix);
@@ -204,7 +203,10 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				continue;
 			}
 			// unary minus handling
-			if (c == '-' && (tokens.isEmpty() || tokens.get(tokens.size() - 1).type == TokenType.OPERATOR || tokens.get(tokens.size() - 1).type == TokenType.LPAREN)) {
+			if (c == '-' && (tokens.isEmpty() ||
+				tokens.get(tokens.size() - 1).type == TokenType.OPERATOR ||
+				tokens.get(tokens.size() - 1).type == TokenType.LPAREN)
+			) {
 				StringBuilder num = new StringBuilder("-");
 				i++;
 				while (i < expr.length() && (Character.isDigit(expr.charAt(i)) || expr.charAt(i) == '.'))
@@ -214,7 +216,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				continue;
 			}
 			// operators
-			if ("+-*/".indexOf(c) != -1) {
+			if ("+-*/%".indexOf(c) != -1) {
 				tokens.add(new Token(TokenType.OPERATOR, String.valueOf(c)));
 				i++;
 				continue;
@@ -237,7 +239,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 	private int precedence(String op) {
 		return switch (op) {
 			case "+", "-" -> 1;
-			case "*", "/" -> 2;
+			case "*", "/", "%" -> 2;
 			default -> 0;
 		};
 	}
@@ -250,7 +252,10 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 			switch (t.type) {
 				case NUMBER -> output.add(t);
 				case OPERATOR -> {
-					while (!ops.isEmpty() && ops.peek().type == TokenType.OPERATOR && precedence(ops.peek().value) >= precedence(t.value))
+					while (
+						!ops.isEmpty() && ops.peek().type == TokenType.OPERATOR &&
+						precedence(ops.peek().value) >= precedence(t.value)
+					)
 						output.add(ops.pop());
 					ops.push(t);
 				}
@@ -274,23 +279,27 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		return output;
 	}
 
-	private double evaluatePostfix(List<Token> postfix) {
-		Stack<Double> stack = new Stack<>();
+	private BigDecimal evaluatePostfix(List<Token> postfix) {
+		Stack<BigDecimal> stack = new Stack<>();
 
 		for (Token t : postfix) {
 			if (t.type == TokenType.NUMBER)
-				stack.push(Double.parseDouble(t.value));
+				stack.push(new BigDecimal(t.value));
 			else {	// order matters here, DO NOT SWAP!
-				double b = stack.pop();
-				double a = stack.pop();
+				BigDecimal b = stack.pop();
+				BigDecimal a = stack.pop();
 
 				switch (t.value) {
-					case "+" -> stack.push(a + b);
-					case "-" -> stack.push(a - b);
-					case "*" -> stack.push(a * b);
+					case "+" -> stack.push(a.add(b));
+					case "-" -> stack.push(a.subtract(b));
+					case "*" -> stack.push(a.multiply(b));
 					case "/" -> {
-						if (b == 0) throw new ArithmeticException("Division by zero");
-						stack.push(a / b);
+						if (b.compareTo(BigDecimal.ZERO) == 0) throw new ArithmeticException("Division by zero");
+						stack.push(a.divide(b, 50, RoundingMode.HALF_UP));
+					}
+					case "%" -> {
+						if (b.compareTo(BigDecimal.ZERO) == 0) throw new ArithmeticException("Division by zero");
+						stack.push(a.remainder(b));
 					}
 				}
 			}
@@ -307,7 +316,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		// configures the JFrame to use BorderLayout, which divides the container into five regions, NORTH, SOUTH, EAST,
 		// WEST and CENTER.
 		setLayout(new BorderLayout());
-		setSize(300, 400);
+		setSize(500, 400);
 
 		// display component
 		// create a text field initialized with "0" as the starting value
@@ -362,7 +371,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		// define the calculator layout as rows and columns
 		// null represents an empty cell (used as a filler)
 		String[][] grid = {
-			{ "C", "±", "%", "÷" },
+			{ "C", "±", "%", "÷", "sin"},
 			{ "(", ")", null, null },	// placeholders
 			{ "7", "8", "9", "×" },
 			{ "4", "5", "6", "-" },
@@ -450,7 +459,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 
 			display.setText(expression.toString());
 			startNewNumber = false;
-		} else if ("+-×÷".contains(command)) {	// operator buttons
+		} else if ("+-×÷%".contains(command)) {	// operator buttons
 			if (expression.length() == 0) return;
 
 			// prevent double operators
@@ -467,7 +476,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		} else if ("=".equals(command)) {	// equals button
 			try {
 				String expr = expression.toString().replace("×", "*").replace("÷", "/");
-				double result = evaluateExpression(expr);
+				BigDecimal result = evaluateExpression(expr);
 
 				display.setText(formatNumber(result));
 				equationLabel.setText(expression + " =");
