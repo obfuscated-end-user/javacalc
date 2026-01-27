@@ -10,6 +10,7 @@
  * - use keyboard for input x
  * - show current equation like "1 + 1" below the display x
  * - add sin, cos, tan, sec, csc, cot x
+ * 		- debug values: 0, 1, 30, 90, 180, 360
  * - add degrees to radians and vice versa
  * - nth root, exponents, factorials, (natural) logarithms, constants
  * - binary, octal, decimal, hexadecimal notations
@@ -22,6 +23,7 @@
  * - history queue
  * - proper javadocs
  * - clipboard support
+ * - i think you really need to split this into multiple files
  * 
  * BUGS
  * - "." on keyboard doesn't work x
@@ -29,6 +31,7 @@
  * - parentheses evaluates to error x
  * - plus-minus evaluates to error x
  * - backspace doesn't work x
+ * - typing `(1 ^ 2)!` gives an error (FIND A WAY TO EVAL ANYTHING INSIDE PARENTHESES FIRST)
  */
 
 import javax.swing.*;
@@ -41,7 +44,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.Stack;
 
-enum TokenType { NUMBER, OPERATOR, FUNCTION, LPAREN, RPAREN }
+enum TokenType { NUMBER, OPERATOR, FUNCTION, FACTORIAL, LPAREN, RPAREN }
 
 public class CalculatorGUI extends JFrame implements ActionListener {
 	private JTextField display;
@@ -78,8 +81,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 	// logs a standard message that includes what's on screen and the current "problem"
 	private void logStatus(String eventLabel) {
 		String currentText = display.getText();
-		System.out.println("[LOG] " + eventLabel + " | display=" + currentText +
-			" | problem=" + currentProblemString(currentText));
+		System.out.println("[LOG] " + eventLabel + " | display=" + currentText);
 	}
 
 	// formats a number to force to an int if that number is a whole number
@@ -89,9 +91,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 	}
 
 	// routes keyboard input into the same path as button presses
-	private void handleInput(String command) {
-		actionPerformed(new ActionEvent(this, ActionEvent.ACTION_PERFORMED, command));
-	}
+	private void handleInput(String command) { actionPerformed(new ActionEvent(this, ActionEvent.ACTION_PERFORMED, command)); }
 
 	private void setupKeyBindings() {
 		JComponent target = getRootPane();
@@ -121,21 +121,18 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 			@Override
 			public void actionPerformed(ActionEvent e) { handleInput("."); }
 		});
-
 		// equals
 		im.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "=");
 		am.put("=", new AbstractAction() {
 			@Override
 			public void actionPerformed(ActionEvent e) { handleInput("="); }
 		});
-
 		// escape - clear
 		im.put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "C");
 		am.put("C", new AbstractAction() {
 			@Override
 			public void actionPerformed(ActionEvent e) { handleInput("C"); }
 		});
-
 		// parentheses
 		im.put(KeyStroke.getKeyStroke(KeyEvent.VK_9, InputEvent.SHIFT_DOWN_MASK), "(");
 		am.put("(", new AbstractAction() {
@@ -147,7 +144,12 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 			@Override
 			public void actionPerformed(ActionEvent e) { handleInput(")"); }
 		});
-
+		// factorial (!)
+		im.put(KeyStroke.getKeyStroke(KeyEvent.VK_1, InputEvent.SHIFT_DOWN_MASK), "!");
+		am.put("!", new AbstractAction() {
+			@Override
+			public void actionPerformed(ActionEvent e) { handleInput("!"); }
+		});
 		// backspace
 		im.put(KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SPACE, 0), "BACK");
 		am.put("BACK", new AbstractAction() {
@@ -188,6 +190,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		return evaluatePostfix(postfix);
 	}
 
+	// tokenizes an expression string
 	private List<Token> tokenize(String expr) {
 		List<Token> tokens = new ArrayList<>();
 		int i = 0;
@@ -223,7 +226,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				continue;
 			}
 			// operators
-			if ("+-*/%".indexOf(c) != -1) {
+			if ("+-*/%^".indexOf(c) != -1) {
 				tokens.add(new Token(TokenType.OPERATOR, String.valueOf(c)));
 				i++;
 				continue;
@@ -238,6 +241,11 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 			}
 			if (c == ')') {
 				tokens.add(new Token(TokenType.RPAREN, ")"));
+				i++;
+				continue;
+			}
+			if (c == '!') {	// (1 ^ 2)! should work
+				tokens.add(new Token(TokenType.FACTORIAL, "!"));
 				i++;
 				continue;
 			}
@@ -257,13 +265,15 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		return tokens;
 	}
 
+	// determine operator precedence (PEMDAS)
 	private int precedence(Token t) {
-		if (t.type == TokenType.FUNCTION) return 3;
+		if (t.type == TokenType.FACTORIAL) return 5;
+		if (t.type == TokenType.FUNCTION) return 4;
 		if (t.type != TokenType.OPERATOR) return 0;
-
 		return switch (t.value) {
 			case "+", "-" -> 1;
 			case "*", "/", "%" -> 2;
+			case "^" -> 3;
 			default -> 0;
 		};
 	}
@@ -271,13 +281,13 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 	private List<Token> toPostFix(List<Token> tokens) {
 		List<Token> output = new ArrayList<>();
 		Stack<Token> ops = new Stack<>();
-
 		for (Token t : tokens) {
 			switch (t.type) {
 				case NUMBER -> output.add(t);
 				case OPERATOR -> {
 					while (
-						!ops.isEmpty() && (ops.peek().type == TokenType.OPERATOR || ops.peek().type == TokenType.FUNCTION) &&
+						!ops.isEmpty() &&
+						(ops.peek().type == TokenType.OPERATOR || ops.peek().type == TokenType.FUNCTION) &&
 						precedence(ops.peek()) >= precedence(t)
 					)
 						output.add(ops.pop());
@@ -288,77 +298,124 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 					while (!ops.isEmpty() && ops.peek().type != TokenType.LPAREN)
 						output.add(ops.pop());
 					if (ops.isEmpty()) throw new IllegalArgumentException("Mismatched parentheses");
-					ops.pop();
+					ops.pop();	// remove "("
 					// if function is on top pop it too
-					if (!ops.isEmpty() && ops.peek().type == TokenType.FUNCTION)
+					if (!ops.isEmpty() && ops.peek().type == TokenType.FUNCTION) output.add(ops.pop());
+					if (!ops.isEmpty() && ops.peek().type == TokenType.FACTORIAL) output.add(ops.pop());
+				}
+				case FACTORIAL -> {
+					// factorial is postfix and highest precedence
+					// only pop other factorials
+					while (!ops.isEmpty() && ops.peek().type == TokenType.FACTORIAL)
 						output.add(ops.pop());
+					ops.push(t);
 				}
 				case FUNCTION -> ops.push(t);
 			}
 		}
-
 		while (!ops.isEmpty()) {
 			if (ops.peek().type == TokenType.LPAREN) throw new IllegalArgumentException("Mismatched parentheses");
 			output.add(ops.pop());
 		}
-
+		printOutput(output);
+		// printOps(ops);
 		return output;
 	}
 
+	// REMOVE LATER LOL
+	private void printOutput(List<Token> output) {
+		System.out.print("Output: [");
+		for (int i = 0; i < output.size(); i++) {
+			System.out.print(output.get(i).value);
+			if (i < output.size() - 1) System.out.print(", ");
+		}
+		System.out.println("]");
+	}
+
+	/* private void printOps(Stack<Token> ops) {
+		System.out.print("Stack: [");
+		// copy to temp list (stacks print backwards)
+		List<Token> temp = new ArrayList<>();
+		while (!ops.isEmpty()) temp.add(ops.pop());
+		for (int i = temp.size() - 1; i >= 0; i--) {
+			System.out.print(temp.get(i).value);
+			if (i > 0) System.out.print(", ");
+		}
+		System.out.println("]");
+		// restore stack
+		for (int i = temp.size() - 1; i >= 0; i--) ops.push(temp.get(i));
+	} */
+
 	private BigDecimal evaluatePostfix(List<Token> postfix) {
 		Stack<BigDecimal> stack = new Stack<>();
-
 		for (Token t : postfix) {
-			if (t.type == TokenType.NUMBER)
-				stack.push(new BigDecimal(t.value));
-			else if (t.type == TokenType.FUNCTION) {
-				BigDecimal a = stack.pop();
-				double radians = Math.toRadians(a.doubleValue());
-				double result;
-
-				switch (t.value) {
-					case "sin" -> result = Math.sin(radians);
-					case "cos" -> result = Math.cos(radians);
-					case "tan" -> result = Math.tan(radians);
-					case "sec" -> result = 1.0 / Math.cos(radians);
-					case "csc" -> result = 1.0 / Math.sin(radians);
-					case "cot" -> result = 1.0 / Math.tan(radians);
-					default -> throw new IllegalArgumentException("Unknown function: " + t.value);
-				}
-
-				stack.push(BigDecimal.valueOf(result));
-			} else {	// order matters here, DO NOT SWAP!
-				BigDecimal b = stack.pop();
-				BigDecimal a = stack.pop();
-
-				switch (t.value) {
-					case "+" -> stack.push(a.add(b));
-					case "-" -> stack.push(a.subtract(b));
-					case "*" -> stack.push(a.multiply(b));
-					case "/" -> {
-						if (b.compareTo(BigDecimal.ZERO) == 0) throw new ArithmeticException("Division by zero");
-						stack.push(a.divide(b, 50, RoundingMode.HALF_UP));
+			switch (t.type) {
+				case NUMBER -> stack.push(new BigDecimal(t.value));
+				case FUNCTION -> {
+					BigDecimal a = stack.pop();
+					double radians = Math.toRadians(a.doubleValue());
+					double result;
+					switch (t.value) {
+						case "sin" -> result = Math.sin(radians);
+						case "cos" -> result = Math.cos(radians);
+						case "tan" -> result = Math.tan(radians);
+						case "sec" -> result = 1.0 / Math.cos(radians);
+						case "csc" -> result = 1.0 / Math.sin(radians);
+						case "cot" -> result = 1.0 / Math.tan(radians);
+						default -> throw new IllegalArgumentException("Unknown function: " + t.value);
 					}
-					case "%" -> {
-						if (b.compareTo(BigDecimal.ZERO) == 0) throw new ArithmeticException("Division by zero");
-						stack.push(a.remainder(b));
+					stack.push(BigDecimal.valueOf(result));
+				}
+				case FACTORIAL -> {
+					BigDecimal a = stack.pop();
+					a = a.stripTrailingZeros();
+					stack.push(factorial(a));
+				}
+				case OPERATOR -> {	// order matters here, DO NOT SWAP!
+					BigDecimal b = stack.pop();
+					BigDecimal a = stack.pop();
+					switch (t.value) {
+						case "+" -> stack.push(a.add(b));
+						case "-" -> stack.push(a.subtract(b));
+						case "*" -> stack.push(a.multiply(b));
+						case "/" -> {
+							if (b.compareTo(BigDecimal.ZERO) == 0) throw new ArithmeticException("Division by zero");
+							stack.push(a.divide(b, 50, RoundingMode.HALF_UP));
+						}
+						case "%" -> {
+							if (b.compareTo(BigDecimal.ZERO) == 0) throw new ArithmeticException("Division by zero");
+							stack.push(a.remainder(b));
+						} case "^" -> {
+							// BigDecimal has not exact power for non-integers
+							// you might lose precision here
+							double res = Math.pow(a.doubleValue(), b.doubleValue());
+							stack.push(BigDecimal.valueOf(res).stripTrailingZeros());
+						}
 					}
 				}
 			}
 		}
-
+		if (stack.size() != 1) throw new IllegalStateException("Invalid expression, stack=" + stack);
 		return stack.pop();
 	}
 
 	private void maybeInsertImplicitMultiply(List<Token> tokens, Token next) {
 		if (tokens.isEmpty()) return;
-
 		Token prev = tokens.get(tokens.size() - 1);
+		boolean implicit =
+			(prev.type == TokenType.NUMBER || prev.type == TokenType.RPAREN || prev.type == TokenType.FACTORIAL) &&
+			(next.type == TokenType.LPAREN || next.type == TokenType.NUMBER || next.type == TokenType.FUNCTION);
+		if (implicit) tokens.add(new Token(TokenType.OPERATOR, "*"));
+	}
 
-		boolean implicit = (prev.type == TokenType.NUMBER || prev.type == TokenType.RPAREN) && (next.type == TokenType.LPAREN || next.type == TokenType.NUMBER);
-
-		if (implicit)
-			tokens.add(new Token(TokenType.OPERATOR, "*"));
+	// handles factorials (!), as much as possible, don't pass in ridiculously large values
+	private static BigDecimal factorial(BigDecimal n) {
+		if (n.scale() > 0 || n.compareTo(BigDecimal.ZERO) < 0)
+			throw new ArithmeticException("Factorial only defined for non-negative integers");
+		int value = n.intValueExact();
+		BigDecimal result = BigDecimal.ONE;
+		for (int i = 2; i <= value; i++) result = result.multiply(BigDecimal.valueOf(i));
+		return result;
 	}
 
 	public CalculatorGUI() {
@@ -369,7 +426,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		// configures the JFrame to use BorderLayout, which divides the container into five regions, NORTH, SOUTH, EAST,
 		// WEST and CENTER.
 		setLayout(new BorderLayout());
-		setSize(500, 400);
+		setSize(600, 500);
 
 		// display component
 		// create a text field initialized with "0" as the starting value
@@ -421,12 +478,12 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		gbc.weightx = 1.0;
 		gbc.weighty = 1.0;
 
-		// define the calculator layout as rows and columns
-		// null represents an empty cell (used as a filler)
+		// define the calculator layout as rows and columns, null represents an empty cell (used as a filler)
+		// button positions not final
 		String[][] grid = {
-			{ "C", "±", "%", null, "sin", "cos", "tan"},
-			{ "(", ")", null, null, "csc", "sec", "cot" },	// placeholders
-			{ "7", "8", "9", "÷" },
+			{ "C", "±", "%", "^", "sin", "cos", "tan"},
+			{ "(", ")", "<<", ">>", "csc", "sec", "cot" },
+			{ "7", "8", "9", "÷", "!" },
 			{ "4", "5", "6", "×" },
 			{ "1", "2", "3", "-" },
 			{ "0", ".", "=", "+" } // 0 will span two cols
@@ -438,7 +495,6 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				String text = grid[row][col];
 				// skip empty cells, used only for layout spacing
 				if (text == null) continue;
-
 				// create button object for each string in grid array
 				JButton button = new JButton(text);
 				// button.setFocusable(false);
@@ -447,31 +503,20 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				// implements ActionListener, every CalculatorGUI object automatically becomes an ActionListener
 				// see actionPerformed() below
 				button.addActionListener(this);
-
 				// set button position
 				gbc.gridx = col;
 				gbc.gridy = row;
-
-				// make 0 button twice as wide
-				// if ("0".equals(text)) gbc.gridwidth = 2;
-				// else gbc.gridwidth = 1;
-
 				// add the button to the panel using the current constraints
 				buttonPanel.add(button, gbc);
-
 				// GridBagConstraints is reused, so we must reset gridwidth, otherwise the next buttons would also span
 				// two columns
-				gbc.gridwidth = 1;
+				// gbc.gridwidth = 1;
 			}
 		}
-
 		// add to center, change CENTER to something else if you want
 		add(buttonPanel, BorderLayout.CENTER);
-		setVisible(true);
-
 		// request focus after the frame is visible
 		SwingUtilities.invokeLater(() -> { buttonPanel.requestFocusInWindow(); });
-
 		setVisible(true);
 		setupKeyBindings();
 	}
@@ -512,7 +557,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 
 			display.setText(expression.toString());
 			startNewNumber = false;
-		} else if ("+-×÷%".contains(command)) {	// operator buttons
+		} else if ("+-×÷%^".contains(command)) {	// operator buttons
 			if (expression.length() == 0) return;
 
 			// prevent double operators
@@ -528,6 +573,13 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 			startNewNumber = true;
 		} else if ("()".contains(command)) {
 			expression.append(command);
+			display.setText(expression.toString());
+			startNewNumber = false;
+		} else if ("!".equals(command)) {
+			if (expression.length() == 0) return;
+			char last = expression.charAt(expression.length() - 1);
+			if ("+-×÷%^(".indexOf(last) != -1) return;
+			expression.append("!");
 			display.setText(expression.toString());
 			startNewNumber = false;
 		} else if ("=".equals(command)) {	// equals button
