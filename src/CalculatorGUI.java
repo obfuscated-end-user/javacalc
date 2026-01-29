@@ -25,6 +25,7 @@
  * - clipboard support
  * - i think you really need to split this into multiple files
  * - resolve variable name ambiguity
+ * - how to group digits by three (no comma)
  * 
  * BUGS
  * - "." on keyboard doesn't work x
@@ -104,91 +105,47 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		InputMap im = target.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
 		ActionMap am = target.getActionMap();
 
+		// add bindings for these keys
 		// digits
-		for (char c = '0'; c <= '9'; c++) {
-			String key = String.valueOf(c);
-			// add bindings for this key
-			im.put(KeyStroke.getKeyStroke(c), key);
-			am.put(key, new AbstractAction() {
-				@Override
-				public void actionPerformed(ActionEvent e) { handleInput(key); }
-			});
-		}
+		for (char c = '0'; c <= '9'; c++) bind(im, am, KeyStroke.getKeyStroke(c), String.valueOf(c));
 		// operators (single and double quotes not interchangeable)
-		bind(im, am, '+');
-		bind(im, am, '-');
-		bind(im, am, '*', "×");
-		bind(im, am, '/', "÷");
-		bind(im, am, '%');
+		bind(im, am, KeyStroke.getKeyStroke('+'), "+");
+		bind(im, am, KeyStroke.getKeyStroke('-'), "-");
+		bind(im, am, KeyStroke.getKeyStroke('*'), "×");
+		bind(im, am, KeyStroke.getKeyStroke('/'), "÷");
+		bind(im, am, KeyStroke.getKeyStroke('%'), "%");
 		// decimal point
-		im.put(KeyStroke.getKeyStroke(KeyEvent.VK_PERIOD, 0), ".");
-		am.put(".", new AbstractAction() {
-			@Override
-			public void actionPerformed(ActionEvent e) { handleInput("."); }
-		});
-		// equals
-		im.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "=");
-		am.put("=", new AbstractAction() {
-			@Override
-			public void actionPerformed(ActionEvent e) { handleInput("="); }
-		});
-		// escape - clear
-		im.put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "C");
-		am.put("C", new AbstractAction() {
-			@Override
-			public void actionPerformed(ActionEvent e) { handleInput("C"); }
-		});
+		bind(im, am, KeyStroke.getKeyStroke('.'), ".");
 		// parentheses
-		im.put(KeyStroke.getKeyStroke(KeyEvent.VK_9, InputEvent.SHIFT_DOWN_MASK), "(");
-		am.put("(", new AbstractAction() {
-			@Override
-			public void actionPerformed(ActionEvent e) { handleInput("("); }
-		});
-		im.put(KeyStroke.getKeyStroke(KeyEvent.VK_0, InputEvent.SHIFT_DOWN_MASK), ")");
-		am.put(")", new AbstractAction() {
-			@Override
-			public void actionPerformed(ActionEvent e) { handleInput(")"); }
-		});
+		bind(im, am, KeyStroke.getKeyStroke('('), "(");
+		bind(im, am, KeyStroke.getKeyStroke(')'), ")");
 		// factorial (!)
-		im.put(KeyStroke.getKeyStroke(KeyEvent.VK_1, InputEvent.SHIFT_DOWN_MASK), "!");
-		am.put("!", new AbstractAction() {
-			@Override
-			public void actionPerformed(ActionEvent e) { handleInput("!"); }
-		});
+		bind(im, am, KeyStroke.getKeyStroke('!'), "!");
+		// escape - clear
+		bind(im, am, KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "C");
 		// backspace
-		im.put(KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SPACE, 0), "BACK");
-		am.put("BACK", new AbstractAction() {
-			@Override
-			public void actionPerformed(ActionEvent e) {
-				// if empty do nothing
-				if (expression.length() == 0) return;
-				// delete last character
-				expression.deleteCharAt(expression.length() - 1);
-				// clean up trailing spaces for operators
-				while (expression.length() > 0 && expression.charAt(expression.length() - 1) == ' ')
-					expression.deleteCharAt(expression.length() - 1);
-
-				if (expression.length() == 0) {	// if empty
-					display.setText("0");		// show "0"
-					startNewNumber = true;
-				} else {
-					display.setText(expression.toString());	// update display
-					startNewNumber = false;
-				}
-			}
-		});
+		bind(im, am, KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SPACE, 0), "BACK");
+		// equals
+		bind(im, am, KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "=");
 	}
 
 	// maps keys and commands to an action
-	private void bind(InputMap im, ActionMap am, char key, String command) {
-		im.put(KeyStroke.getKeyStroke(key), command);	// map key to command
-		am.put(command, new AbstractAction() {			// map command to action
+	private void bind(InputMap im, ActionMap am, KeyStroke key, String command) {
+		im.put(key, command);
+		am.put(command, new AbstractAction() {
 			@Override
 			public void actionPerformed(ActionEvent e) { handleInput(command); }
 		});
 	}
-	// overload if key is same as command to reduce redundancy
-	private void bind(InputMap im, ActionMap am, char key) { bind(im, am, key, String.valueOf(key)); }
+
+	private StringBuilder extractNumber(String expr, int[] pos, boolean includeMinus) {
+		StringBuilder num = new StringBuilder();
+		if (includeMinus) num.append('-');
+		// build number char-by-char
+		while (pos[0] < expr.length() && (Character.isDigit(expr.charAt(pos[0])) || expr.charAt(pos[0]) == '.'))
+			num.append(expr.charAt(pos[0]++));	// grab all digits/decimals
+		return num;
+	}
 
 	// tokenizes an expression string
 	private List<Token> tokenize(String expr) {
@@ -198,7 +155,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		if (expr.startsWith("Ans")) {	// special case
 			// replace "Ans" with whatever number
 			tokens.add(new Token(TokenType.NUMBER, lastAnswer.toString()));
-			i = 3;  // skip "Ans"
+			i = 3;	// skip "Ans"
 			maybeInsertImplicitMultiply(tokens, tokens.get(tokens.size() - 1));
 		}
 
@@ -212,9 +169,9 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 			}
 			// number (supports decimals)
 			if (Character.isDigit(c) || c == '.') {
-				StringBuilder num = new StringBuilder();	// build number char-by-char
-				while(i < expr.length() && (Character.isDigit(expr.charAt(i)) || expr.charAt(i) == '.'))
-					num.append(expr.charAt(i++));	// grab all digits/decimals
+				int[] pos = {i};
+				StringBuilder num = extractNumber(expr, pos, false);
+				i = pos[0];	// update i
 				Token t = new Token(TokenType.NUMBER, num.toString());
 				maybeInsertImplicitMultiply(tokens, t);	// ex. 2(3) becomes 2*(3), see that function below
 				tokens.add(t);
@@ -225,11 +182,13 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				tokens.get(tokens.size() - 1).type == TokenType.OPERATOR ||	// after operator: "2 + -5"
 				tokens.get(tokens.size() - 1).type == TokenType.LPAREN)	// after left parenthesis: sin(-30)
 			) {	// treat as number
-				StringBuilder num = new StringBuilder("-");	 // start with "-"
 				i++;	// skip past the '-' char
-				while (i < expr.length() && (Character.isDigit(expr.charAt(i)) || expr.charAt(i) == '.'))
-					num.append(expr.charAt(i++));	// grab all digits/decimals that follow
-				tokens.add(new Token(TokenType.NUMBER, num.toString()));	// "-3.14" as one token
+				int[] pos = {i};
+				StringBuilder num = extractNumber(expr, pos, true);	 // start with "-"
+				i = pos[0];	// grab all digits/decimals that follow
+				Token t = new Token(TokenType.NUMBER, num.toString());
+				maybeInsertImplicitMultiply(tokens, t);
+				tokens.add(t);	// "-3.14" as one token
 				continue;
 			}
 			// operators
@@ -373,6 +332,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 						case "*" -> stack.push(a.multiply(b));
 						case "/" -> {
 							if (b.compareTo(BigDecimal.ZERO) == 0) throw new ArithmeticException("Division by zero");
+							// up to 50 digits
 							stack.push(a.divide(b, 50, RoundingMode.HALF_UP));
 						} case "%" -> {
 							if (b.compareTo(BigDecimal.ZERO) == 0) throw new ArithmeticException("Division by zero");
@@ -401,14 +361,6 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		if (implicit) tokens.add(new Token(TokenType.OPERATOR, "*"));	// insert *
 	}
 
-	// gamma approximation for decimals (convert n! to Γ(n+1))
-	// https://en.wikipedia.org/wiki/Gamma_function
-	private static double gamma(double x) {
-		// close enough
-		// https://en.wikipedia.org/wiki/Stirling%27s_approximation#Stirling's_formula_for_the_gamma_function
-		return Math.exp((x - 0.5) * Math.log(x) - x + 0.5 * Math.log(2 * Math.PI) + (1.0/12.0) - (1.0/360.0) * (1.0 / (x * x)));
-	}
-
 	// handles factorials (!), as much as possible, don't pass in ridiculously large values
 	private static BigDecimal factorial(BigDecimal n) {
 		if (n.compareTo(BigDecimal.ZERO) < 0)
@@ -421,10 +373,24 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				intFactorialResult = intFactorialResult.multiply(BigDecimal.valueOf(i));
 			return intFactorialResult;
 		}
-		// decimal
+		// gamma approximation for decimals (convert n! to Γ(n+1))
+		// https://en.wikipedia.org/wiki/Gamma_function
+		// close enough
+		// https://en.wikipedia.org/wiki/Stirling%27s_approximation#Stirling's_formula_for_the_gamma_function
 		double x = n.doubleValue() + 1.0;
-		return BigDecimal.valueOf(gamma(x));
+		return BigDecimal.valueOf(Math.exp((x - 0.5) * Math.log(x) - x + 0.5 * Math.log(2 * Math.PI) + (1.0/12.0) - (1.0/360.0) * (1.0 / (x * x))));
 	}
+
+	private boolean isValidAfterOperator(char lastChar) { return "+-×÷%^() ".indexOf(lastChar) == -1; }
+
+	private int findLastOperator(String expr) {
+		return Math.max(
+			Math.max(expr.lastIndexOf("+"), expr.lastIndexOf("-")),
+			Math.max(expr.lastIndexOf("×"), expr.lastIndexOf("÷"))
+		);
+	}
+
+	private void updateDisplay() { display.setText(expression.toString()); }
 
 	public CalculatorGUI() {
 		setTitle("JavaCalc");
@@ -492,7 +458,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 			{ "C", "±", "%", "^", "sin", "cos", "tan"},
 			{ "(", ")", "<<", ">>", "csc", "sec", "cot" },
 			{ "7", "8", "9", "÷", "!", "√" },
-			{ "4", "5", "6", "×", "Ans" },
+			{ "4", "5", "6", "×", "Ans", "BACK" },
 			{ "1", "2", "3", "-" },
 			{ "0", ".", "=", "+" }
 		};
@@ -539,18 +505,15 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		if ("0123456789".contains(command)) {	// digit buttons
 			if (startNewNumber) {
 				expression.append(command);
-				display.setText(expression.toString());
+				updateDisplay();
 				startNewNumber = false;
 			} else {
 				expression.append(command);
-				display.setText(expression.toString());
+				updateDisplay();
 			}
 		} else if (".".equals(command)) {	// decimal point
 			// find last operator to isolate current number
-			int lastOp = Math.max(
-				Math.max(expression.lastIndexOf("+"), expression.lastIndexOf("-")),
-				Math.max(expression.lastIndexOf("×"), expression.lastIndexOf("÷"))
-			);
+			int lastOp = findLastOperator(expression.toString());
 			// extract current number being edited after the last operator
 			// if true, whole expression is current number
 			// if false, everything after the last operator
@@ -560,62 +523,80 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 			// if nothing on display do "0.", else just append "." on existing number
 			if (startNewNumber || expression.length() == 0) expression.append("0.");
 			else expression.append(".");
-			display.setText(expression.toString());
+			updateDisplay();
 			startNewNumber = false;
 		} else if ("+-×÷%^".contains(command)) {	// operator buttons
 			if (expression.length() == 0) return;	// empty
 			// check last character
 			char last = expression.charAt(expression.length() - 1);
 			// check if last char is an operator or space and blocks double operators
-			if ("+-×÷ ".indexOf(last) != -1) return;
+			if (!isValidAfterOperator(last)) return;
 			// do something like " + " (space operator space)
 			expression.append(" ").append(command).append(" ");
-			display.setText(expression.toString());
+			updateDisplay();
 			startNewNumber = true;
 		} else if (TRIG_FUNCTIONS.contains(command)) {	// trigonemetric functions
 			expression.append(command).append("(");
-			display.setText(expression.toString());
+			updateDisplay();
 			startNewNumber = true;
 		} else if ("()".contains(command)) {
 			expression.append(command);
-			display.setText(expression.toString());
+			updateDisplay();
 			startNewNumber = false;
 		} else if ("!".equals(command)) {
 			if (expression.length() == 0) return;
 			char last = expression.charAt(expression.length() - 1);
 			// check if last char is an operator or right parentheses and block them
-			if ("+-×÷%^(".indexOf(last) != -1) return;
+			if (!isValidAfterOperator(last)) return;
 			expression.append("!");
-			display.setText(expression.toString());
+			updateDisplay();
 			startNewNumber = false;
 		} else if ("Ans".equals(command)) {
 			if (lastAnswer != null) {
 				expression.append(formatNumber(lastAnswer));
-				display.setText(expression.toString());
+				updateDisplay();
+				startNewNumber = false;
+			}
+		} else if ("BACK".equals(command)) {
+			// if empty do nothing
+			if (expression.length() == 0) return;
+			// delete last character
+			expression.deleteCharAt(expression.length() - 1);
+			// clean up trailing spaces for operators
+			while (expression.length() > 0 && expression.charAt(expression.length() - 1) == ' ')
+				expression.deleteCharAt(expression.length() - 1);
+
+			if (expression.length() == 0) {	// if empty
+				display.setText("0");		// show "0"
+				startNewNumber = true;
+			} else {
+				updateDisplay();
 				startNewNumber = false;
 			}
 		} else if ("±".equals(command)) {
 			if (expression.length() == 0) return;
 			try {
-				// find last operator to isolate current number
-				int lastOp = Math.max(
-					Math.max(expression.lastIndexOf("+"), expression.lastIndexOf("- ")),
-					Math.max(expression.lastIndexOf("×"), expression.lastIndexOf("÷"))
-				);
-				// start of current number
-				int start = lastOp == -1 ? 0 : lastOp + 1;
-				// skip spaces
-				while (start < expression.length() && expression.charAt(start) == ' ') start++;
-				// fixes the stacked negative signs thing ("-----1")
-				if (expression.charAt(start) == '-')	// already negative
-					expression.deleteCharAt(start);		// make positive
-				else expression.insert(start, '-');		// else the other way around
-				display.setText(expression.toString());
+				// find end of last number
+				int end = expression.length();
+				// skip trailing spaces
+				while (end > 0 && expression.charAt(end - 1) == ' ') end--;
+				// skip digits/decimal to find number start
+				while (end > 0 && (Character.isDigit(expression.charAt(end - 1)) || expression.charAt(end - 1) == '.' || expression.charAt(end - 1) == '-')) end--;
+				// now end points to start of last number including unary minus
+				if (end == expression.length()) return;	// no number found
+				// toggle the sign at the start of the number
+				if (expression.charAt(end) == '-') expression.deleteCharAt(end);
+				else expression.insert(end, '-');
+				updateDisplay();
 			} catch (Exception ex) {
 				System.err.println("± FAIL: " + ex);
 				return;
 			}
 		} else if ("=".equals(command)) {	// equals button
+			if (expression.length() == 0) {
+				display.setText("0");
+				return;
+			}
 			try {
 				String expr = expression.toString().replace("×", "*").replace("÷", "/");
 				// converts user input to a precise result using shunting yard algorithm
