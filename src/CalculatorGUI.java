@@ -49,6 +49,8 @@
  *	csc(0)
  *	cot(0)
  *	-1!
+ * CAN'T TYPE THESE:
+ * (√1)!
  */
 
 import javax.swing.*;
@@ -62,7 +64,7 @@ import java.util.Set;
 import java.util.Stack;
 
 // classifies different parts of an expression for the parser
-enum TokenType { NUMBER, OPERATOR, FUNCTION, FACTORIAL, LPAREN, RPAREN }
+enum TokenType { NUMBER, OPERATOR, FUNCTION, FACTORIAL, LPAREN, RPAREN, ROOT }
 
 public class CalculatorGUI extends JFrame implements ActionListener {
 	private JTextField display;
@@ -121,6 +123,8 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		bind(im, am, KeyStroke.getKeyStroke(')'), ")");
 		// factorial (!)
 		bind(im, am, KeyStroke.getKeyStroke('!'), "!");
+		// square root
+		bind(im, am, KeyStroke.getKeyStroke('r', InputEvent.CTRL_DOWN_MASK), "√");
 		// escape - clear
 		bind(im, am, KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "C");
 		// backspace
@@ -215,6 +219,24 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				i++;
 				continue;
 			}
+			if (c == '√') {	// nth root, handles both √x and √(y)x
+				tokens.add(new Token(TokenType.ROOT, "√"));
+				i++;
+				// check for nth root syntax
+				if (i < expr.length() && expr.charAt(i) == '[') {
+					i++;	// skip [
+					int[] pos = {i};
+					StringBuilder index = extractNumber(expr, pos, true);	// allow negative index
+					i = pos[0];
+					if (i >= expr.length() || expr.charAt(i) != ']')
+						throw new IllegalArgumentException("Missing ] after root index");
+					i++;	// skip ]
+					// store as "√[index]"
+					tokens.get(tokens.size() - 1).value = "√[" + index + "]";
+				}
+				maybeInsertImplicitMultiply(tokens, tokens.get(tokens.size() - 1));
+				continue;
+			}
 			// function names (sin, cos, tan, etc.)
 			if (Character.isLetter(c)) {	// starts with a letter, which all functions here do as of now
 				StringBuilder name = new StringBuilder();
@@ -233,6 +255,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 	// determine operator precedence (PEMDAS)
 	private int precedence(Token t) {
 		if (t.type == TokenType.FACTORIAL) return 5;	// highest precedence
+		if (t.type == TokenType.ROOT) return 4;
 		if (t.type == TokenType.FUNCTION) return 4;
 		if (t.type != TokenType.OPERATOR) return 0;
 		return switch (t.value) {
@@ -278,6 +301,7 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 					ops.push(t);
 				}
 				case FUNCTION -> ops.push(t);
+				case ROOT -> ops.push(t);
 			}
 		}
 		// flush remaining operators to output at end of expression and catches unmatched "("s
@@ -307,20 +331,49 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				case FUNCTION -> {
 					BigDecimal a = stack.pop();
 					double rad = Math.toRadians(a.doubleValue());
-					double result;
+					double res;
 					switch (t.value) {
-						case "sin" -> result = Math.sin(rad);
-						case "cos" -> result = Math.cos(rad);
-						case "tan" -> result = Math.tan(rad);
-						case "sec" -> result = 1.0 / Math.cos(rad);
-						case "csc" -> result = 1.0 / Math.sin(rad);
-						case "cot" -> result = 1.0 / Math.tan(rad);
+						case "sin" -> res = Math.sin(rad);
+						case "cos" -> res = Math.cos(rad);
+						case "tan" -> res = Math.tan(rad);
+						case "sec" -> res = 1.0 / Math.cos(rad);
+						case "csc" -> res = 1.0 / Math.sin(rad);
+						case "cot" -> res = 1.0 / Math.tan(rad);
 						default -> throw new IllegalArgumentException("Unknown function: " + t.value);
 					}
-					stack.push(BigDecimal.valueOf(result));
+					stack.push(BigDecimal.valueOf(res));
+				}
+				case ROOT -> {
+					BigDecimal x = stack.pop();	// radicand, thing inside √
+					BigDecimal res;
+
+					String rootStr = t.value;
+					if (rootStr.equals("√")) {
+						// square root √x
+						if (x.compareTo(BigDecimal.ZERO) < 0)
+							throw new ArithmeticException("Square root of a negative number");
+						res = BigDecimal.valueOf(Math.sqrt(x.doubleValue()));
+					} else {
+						// nth root √[n]x
+						String indexStr = rootStr.substring(2, rootStr.length() - 1);	// extract n from √[n]x
+						BigDecimal n = new BigDecimal(indexStr);
+
+						if (n.compareTo(BigDecimal.ZERO) == 0)
+							throw new ArithmeticException("Root index cannot be zero");
+
+						// handle negative numbers: only for odd integer roots
+						boolean allowNegative = n.scale() == 0 && (n.intValueExact() % 2 == 1);
+						if (x.compareTo(BigDecimal.ZERO) < 0 && !allowNegative)
+							throw new ArithmeticException("Root of negative number only valid for odd integer roots");
+
+						// nth root = x^(1/n)
+						double exponent = 1.0 / n.doubleValue();
+						res = BigDecimal.valueOf(Math.pow(x.doubleValue(), exponent));
+					}
+					stack.push(res.stripTrailingZeros());
 				}
 				case FACTORIAL -> {
-					BigDecimal a = stack.pop().stripTrailingZeros();
+					BigDecimal a = stack.pop();//.stripTrailingZeros();
 					stack.push(factorial(a));
 				}
 				case OPERATOR -> {	// order matters here, DO NOT SWAP!
@@ -366,12 +419,12 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 		if (n.compareTo(BigDecimal.ZERO) < 0)
 			throw new ArithmeticException("Factorial undefined for negative numbers");
 		// integer
-		if (n.scale() == 0) {
+		if (n.scale() == 0 || (n.scale() == 0 && n.remainder(BigDecimal.ONE).compareTo(BigDecimal.ZERO) == 0)) {
 			int value = n.intValueExact();
-			BigDecimal intFactorialResult = BigDecimal.ONE;
-			for (int i = 2; i <= value; i++)
-				intFactorialResult = intFactorialResult.multiply(BigDecimal.valueOf(i));
-			return intFactorialResult;
+			BigDecimal res = BigDecimal.ONE;
+			if (value <= 1) return res;
+			for (int i = 2; i <= value; i++) res = res.multiply(BigDecimal.valueOf(i));
+			return res;
 		}
 		// gamma approximation for decimals (convert n! to Γ(n+1))
 		// https://en.wikipedia.org/wiki/Gamma_function
@@ -551,6 +604,19 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 			expression.append("!");
 			updateDisplay();
 			startNewNumber = false;
+		} else if ("√".equals(command)) {
+			if (expression.length() == 0 || startNewNumber) {
+				expression.setLength(0);	// clear any existing "0"
+				expression.append("√");
+				updateDisplay();
+				startNewNumber = true;
+			} else {
+				char last = expression.charAt(expression.length() - 1);
+				if (!isValidAfterOperator(last)) return;
+				expression.append("√");
+				updateDisplay();
+				startNewNumber = true;
+			}
 		} else if ("Ans".equals(command)) {
 			if (lastAnswer != null) {
 				expression.append(formatNumber(lastAnswer));
@@ -602,9 +668,9 @@ public class CalculatorGUI extends JFrame implements ActionListener {
 				// converts user input to a precise result using shunting yard algorithm
 				// https://en.wikipedia.org/wiki/Shunting_yard_algorithm
 				// ex. "sin(30) + 2!" becomes:
-				//  -> [sin, (, 30, ), +, 2, !]
-				//  -> [30, sin, 2, !, +]
-				//  -> 2.49999999999999994 or 2.5
+				//	-> [sin, (, 30, ), +, 2, !]
+				//	-> [30, sin, 2, !, +]
+				//	-> 2.49999999999999994 or 2.5
 				BigDecimal result = evaluatePostfix(toPostFix(tokenize(expr)));
 				lastAnswer = result;
 				display.setText(formatNumber(result));
